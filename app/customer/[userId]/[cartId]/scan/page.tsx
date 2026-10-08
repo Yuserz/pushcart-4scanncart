@@ -95,7 +95,22 @@ export default function ScanPage(): JSX.Element {
         ? Date.parse(mySession.last_sync_at)
         : 0;
       setOffline(!lastSync || Date.now() - lastSync > CAMERA_OFFLINE_MS);
-    } catch {
+    } catch (error) {
+      if (
+        error instanceof PosApiError &&
+        (error.status === 401 || error.status === 403)
+      ) {
+        // The server refused *this* visitor: no session, an expired one, or someone else's
+        // cart. Retrying can never succeed, so the honest answer is the same one the
+        // no-session case above gives — not "wait", which would be a dead end with a
+        // spinner on it.
+        setSession(null);
+        setItems([]);
+        setLoadError(
+          'This checkout is no longer available. Return to the start screen to continue.',
+        );
+        return;
+      }
       setLoadError(
         'Could not refresh your cart. Retrying automatically; please wait before finishing.',
       );

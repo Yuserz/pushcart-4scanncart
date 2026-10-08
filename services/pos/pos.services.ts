@@ -99,11 +99,20 @@ export interface PosCartItem {
 // Carries the route's {error, items} body so callers can name short-stock items.
 export class PosApiError extends Error {
   data: { error?: string; items?: unknown } | undefined;
+  /** The HTTP status, when the error came from a response. The tablet's poll uses it to
+   *  tell "this checkout is not yours / is gone" (401/403 — retrying can never succeed)
+   *  from a transient failure worth retrying. */
+  status?: number;
 
-  constructor(message: string, data?: { error?: string; items?: unknown }) {
+  constructor(
+    message: string,
+    data?: { error?: string; items?: unknown },
+    status?: number,
+  ) {
     super(message);
     this.name = 'PosApiError';
     this.data = data;
+    this.status = status;
   }
 }
 
@@ -112,7 +121,7 @@ const apiError = (e: unknown): never => {
     const body = e.response?.data as
       | { error?: string; items?: unknown }
       | undefined;
-    throw new PosApiError(body?.error ?? e.message, body);
+    throw new PosApiError(body?.error ?? e.message, body, e.response?.status);
   }
   throw e;
 };
