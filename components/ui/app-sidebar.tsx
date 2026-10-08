@@ -31,9 +31,13 @@ export function AppSidebar({
 
   const cartId = pathname.split('/')[3];
 
+  // The persisted auth store can be empty or stale (e.g. after sessionStorage
+  // clears or on an anonymous page load); the URL always carries the current
+  // id, so prefer it and fall back to the store only when it is absent.
+  const pathnameId = pathname.split('/')[2];
   const menus = pathname.startsWith('/customer')
-    ? customerMenus(categories, id, cartId)
-    : adminMenus(id, today.getFullYear());
+    ? customerMenus(categories, (pathnameId || id) as string, cartId)
+    : adminMenus((pathnameId || id) as string, today.getFullYear());
 
   // This is sample data.
   const data = {
