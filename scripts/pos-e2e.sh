@@ -142,9 +142,15 @@ REF="$(printf '%s' "$OPEN" | jqr 'data.session_ref')"
 if [[ -z "$REF" ]]; then echo "open session failed: $OPEN" >&2; exit 2; fi
 ok "session opened ($REF)"
 
+# The daily shopper label, assigned inside the open's transaction (spec: a display code next
+# to the machine UUID, one counter per Manila day, only actual shoppers consume numbers).
+SHOP1="$(printf '%s' "$OPEN" | jqr 'data.shopper_code')"
+if [[ "$SHOP1" =~ ^Shopper_[0-9]{4}$ ]]; then ok "the open carries a daily shopper label ($SHOP1)"; else bad "open response has no Shopper_NNNN label: [$SHOP1]"; fi
+
 # --- session poll sees it -----------------------------------------------
 code="$(pos_get "$STATION")"
 check "session poll -> 200" "$code" "200"
+check "the session poll carries the same label" "$(jqr 'data.shopper_code' <"$WORK/body")" "$SHOP1"
 
 # --- sync adds -----------------------------------------------------------
 code="$(pos_sync "$REF" "[{\"class_name\":\"$CLASS\",\"quantity\":1}]")"
@@ -461,6 +467,63 @@ code="$(curl -s -o /dev/null -w '%{http_code}' "$APP_URL/api/pos/session?station
 check "a poll over a fresh session answers 200" "$code" "200"
 check "the fresh session survives the sweep" "$(rest GET "station_sessions?session_ref=eq.$REF4&select=status" | jqr '0.status')" "open"
 
+# --- shopper numbering: consecutive, daily reset, distinct under parallel Starts ---
+# The label's contract: one counter per Manila day, bumped under row lock inside the open's
+# transaction. So the next Start draws previous+1 whatever ran in between (measured against
+# the counter row itself, not a hardcoded number), a new day restarts at 0001, and two
+# parallel Starts — even on different stations — can never draw the same number.
+STATION2="e2e-counter-b-$$"
+rest POST 'stations' "{\"id\":\"$STATION2\",\"name\":\"E2E Counter B\"}" >/dev/null
+TODAY="$(TZ=Asia/Manila date +%F)"
+COUNTER() { rest GET "pos_shopper_counters?day=eq.$1&select=last_no" | jqr '0.last_no'; }
+
+login_open() {
+  # login_open COOKIEFILE STATION -> prints the open response JSON. The station is freed
+  # first (service key): a previous section's or previous check's session is still open and
+  # the busy branch would otherwise refuse this one — the busy path is covered elsewhere.
+  local login cart
+  rest PATCH "station_sessions?station_id=eq.$2&status=eq.open" "{\"status\":\"cancelled\",\"ended_at\":\"$(node -e 'process.stdout.write(new Date().toISOString())')\"}" >/dev/null
+  login="$(curl -s -c "$1" -X POST "$APP_URL/api/auth" -H 'Content-Type: application/json' -d '{"type":"customer-sign-in"}')"
+  cart="$(printf '%s' "$login" | jqr 'data.cart.id')"
+  curl -s -b "$1" -X POST "$APP_URL/api/protected/station-session" -H 'Content-Type: application/json' -d "{\"station_id\":\"$2\",\"cart_id\":\"$cart\"}"
+}
+
+NO_BEFORE="$(COUNTER "$TODAY")"
+OPEN_B="$(login_open "$COOKIE3" "$STATION2")"
+SHOP_B="$(printf '%s' "$OPEN_B" | jqr 'data.shopper_code')"
+if [[ "$SHOP_B" =~ ^Shopper_[0-9]{4}$ ]]; then
+  check "the next Start draws previous+1 whatever ran before" "$((10#${SHOP_B#Shopper_}))" "$((NO_BEFORE + 1))"
+else
+  bad "station-B open drew no label: [$SHOP_B]"
+fi
+
+# Daily reset at Manila midnight: move today's counter row to yesterday, and the next Start
+# draws the new day's first number.
+rest PATCH "pos_shopper_counters?day=eq.$TODAY" "{\"day\":\"$(TZ=Asia/Manila date -d yesterday +%F)\"}" >/dev/null
+OPEN_C="$(login_open "$COOKIE3" "$STATION2")"
+check "a new day restarts the count at 0001" "$(printf '%s' "$OPEN_C" | jqr 'data.shopper_code')" "Shopper_0001"
+rest DELETE "pos_shopper_counters?day=eq.$(TZ=Asia/Manila date -d yesterday +%F)" >/dev/null
+
+# Distinct under parallel Starts: two customers tapping Start at the same instant, on two
+# stations, must never draw the same number. The counter row lock is what serializes them
+# (login_open frees each station, so neither Start hits the busy branch).
+# NOTE: `VAR="$(cmd)" &` assigns inside the background subshell — the parent never sees it —
+# so the parallel opens write to files instead.
+login_open "$COOKIE2" "$STATION" > "$WORK/p1.json" & P1=$!
+login_open "$COOKIE3" "$STATION2" > "$WORK/p2.json" & P2=$!
+wait "$P1"; wait "$P2"
+SHOP_P1="$(jqr 'data.shopper_code' <"$WORK/p1.json")"
+SHOP_P2="$(jqr 'data.shopper_code' <"$WORK/p2.json")"
+if [[ "$SHOP_P1" =~ ^Shopper_[0-9]{4}$ && "$SHOP_P2" =~ ^Shopper_[0-9]{4}$ ]]; then
+  ok "both parallel Starts drew a label ($SHOP_P1 / $SHOP_P2)"
+else
+  bad "a parallel Start drew no label: [$SHOP_P1] / [$SHOP_P2]"
+fi
+if [[ "$SHOP_P1" =~ ^Shopper_[0-9]{4}$ && "$SHOP_P2" =~ ^Shopper_[0-9]{4}$ && "$SHOP_P1" != "$SHOP_P2" ]]; then
+  ok "parallel Starts drew distinct numbers"
+else
+  bad "parallel Starts collided or drew nothing: [$SHOP_P1] / [$SHOP_P2]"
+fi
 
 echo
 echo "PASS=$PASS FAIL=$FAIL"

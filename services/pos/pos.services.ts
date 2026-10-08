@@ -63,6 +63,9 @@ export interface PosSessionInfo {
   session_ref: string;
   cart_id: string;
   cart_code: string;
+  // The daily human label ("Shopper_0007") pos_open_session assigned; null for a cart that
+  // never opened a session. The UUID stays the machine key — this is display only.
+  shopper_code?: string | null;
   last_sync_at: string | null;
   // What the scanner saw and could not resolve (SCANnCART basket mode). Above zero, Finish
   // is refused until staff have checked the basket. Older rows report neither field.
@@ -132,7 +135,12 @@ export const getStations = async (): Promise<PosStation[]> => {
 export const openStationSession = async (
   stationId: string,
   cartId: string,
-): Promise<{ session_ref: string; cart_id: string; cart_code: string }> => {
+): Promise<{
+  session_ref: string;
+  cart_id: string;
+  cart_code: string;
+  shopper_code: string | null;
+}> => {
   try {
     const response = await axiosService.post('/api/protected/station-session', {
       station_id: stationId,
@@ -341,3 +349,4 @@ export const cancelPosSession = async (id: string) => {
     return apiError(e);
   }
 };
+

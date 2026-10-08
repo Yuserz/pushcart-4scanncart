@@ -88,7 +88,9 @@ export const getSessionForStation = async (stationId: string) => {
 
     const { data, error } = await supabase
       .from('station_sessions')
-      .select('session_ref, cart_id, carts:cart_id(status, code_token)')
+      .select(
+        'session_ref, cart_id, carts:cart_id(status, code_token, shopper_no)',
+      )
       .eq('station_id', stationId)
       .eq('status', 'open')
       .order('created_at', { ascending: false })
@@ -107,6 +109,7 @@ export const getSessionForStation = async (stationId: string) => {
     const cart = data.carts as unknown as {
       status: string;
       code_token: string;
+      shopper_no: number | null;
     } | null;
 
     return successResponse({
@@ -116,6 +119,11 @@ export const getSessionForStation = async (stationId: string) => {
         cart_id: data.cart_id,
         cart_code: cart?.code_token ?? null,
         cart_status: cart?.status ?? null,
+        // The daily human label pos_open_session assigned (null for a cart that never
+        // opened a session). lpad(NULL) is NULL, mirroring pos_my_session.
+        shopper_code: cart?.shopper_no
+          ? `Shopper_${String(cart.shopper_no).padStart(4, '0')}`
+          : null,
       },
     });
   } catch (error) {

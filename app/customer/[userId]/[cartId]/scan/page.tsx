@@ -290,9 +290,10 @@ export default function ScanPage(): JSX.Element {
           <Card className="w-full shadow-xs">
             <CardHeader className="flex items-center justify-between">
               <h1 className="text-2xl font-bold">Items</h1>
-              {session?.cart_code && (
+              {(session?.shopper_code || session?.cart_code) && (
                 <Badge variant="secondary">
-                  Cart {session.cart_code.slice(0, 8)}
+                  {session?.shopper_code ??
+                    `Cart ${session?.cart_code.slice(0, 8)}`}
                 </Badge>
               )}
             </CardHeader>
