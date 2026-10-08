@@ -546,6 +546,18 @@ else
   bad "parallel Starts collided or drew nothing: [$SHOP_P1] / [$SHOP_P2]"
 fi
 
+# Leftover seed rows poison the real rig: scan-start opens on stations[0], and the admin
+# mapping screen lists every class map — so this run's stations, mappings and product are
+# deleted on the way out. The trap covers early exits; the tail covers the normal one.
+cleanup() {
+  rest DELETE "station_sessions?station_id=in.($STATION,$STATION2)" >/dev/null
+  rest DELETE "cart_items?product_id=eq.$PRODUCT_ID" >/dev/null
+  rest DELETE "product_class_map?class_slug=like.e2e_class*" >/dev/null
+  rest DELETE "products?id=eq.$PRODUCT_ID" >/dev/null
+  rest DELETE "stations?id=in.($STATION,$STATION2)" >/dev/null
+}
+trap cleanup EXIT
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 [[ "$FAIL" -eq 0 ]]
