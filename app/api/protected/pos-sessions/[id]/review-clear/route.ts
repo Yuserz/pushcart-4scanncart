@@ -20,7 +20,7 @@ export async function POST(
 
     // Same gate as the cart routes: a signed-in admin. A customer (or an anonymous
     // counter tablet cookie) gets 403, and only an *open* session is clearable.
-    const supabase = createClient();
+    const supabase = await createClient();
     const {
       data: { user },
     } = await supabase.auth.getUser();
