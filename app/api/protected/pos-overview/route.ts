@@ -21,7 +21,7 @@ export async function GET() {
       supabase
         .from('station_sessions')
         .select(
-          'id, station_id, session_ref, cart_id, status, created_at, last_activity_at, stations(name), carts(code_token)',
+          'id, station_id, session_ref, cart_id, status, created_at, last_activity_at, pending_review, review_cleared_at, review_reasons, stations(name), carts(code_token)',
         )
         .eq('status', 'open')
         .order('created_at', { ascending: false }),

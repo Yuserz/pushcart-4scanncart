@@ -66,6 +66,17 @@ function validate(
       return { error: 'review_reasons must be at most 50 strings' };
     }
   }
+  // The as-of stamp for the review count: the newest interaction the count includes.
+  // pos_set_review uses it to let a staff clear (admin POS screen) outrank a stale
+  // desktop re-post while still accepting genuinely newer interactions.
+  if (b.review_as_of !== undefined) {
+    if (
+      typeof b.review_as_of !== 'string' ||
+      Number.isNaN(Date.parse(b.review_as_of))
+    ) {
+      return { error: 'review_as_of must be an ISO timestamp' };
+    }
+  }
 
   return { payload: b as PosSyncPayload };
 }

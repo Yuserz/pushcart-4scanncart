@@ -7,9 +7,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { Trash, XCircle, MapPin } from 'lucide-react';
+import { Trash, XCircle, MapPin, CheckCheck } from 'lucide-react';
 import {
   cancelPosSession,
+  clearPosSessionReview,
   createPosMapping,
   createPosStation,
   deletePosMapping,
@@ -123,6 +124,19 @@ export default function PosMappingPage(): JSX.Element {
     void (async () => {
       try {
         await cancelPosSession(id);
+        await refresh();
+      } catch (error) {
+        setMessage(errorText(error));
+      }
+    })();
+  };
+
+  // Staff checked the basket by eye (the desktop POS panel's "Basket checked", reachable
+  // from here so nobody walks to the desktop): clears the review the tablet blocks on.
+  const onClearReview = (id: string): void => {
+    void (async () => {
+      try {
+        await clearPosSessionReview(id);
         await refresh();
       } catch (error) {
         setMessage(errorText(error));
@@ -329,15 +343,37 @@ export default function PosMappingPage(): JSX.Element {
                     last activity{' '}
                     {new Date(session.last_activity_at).toLocaleString()}
                   </div>
+                  {session.pending_review > 0 && (
+                    <div
+                      className="text-amber-600"
+                      title={session.review_reasons.join('\n')}
+                    >
+                      {session.pending_review} need
+                      {session.pending_review === 1 ? '' : 's'} review — latest:{' '}
+                      {session.review_reasons.at(-1) ?? 'unknown'}
+                    </div>
+                  )}
                 </div>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => onCancelSession(session.id)}
-                >
-                  <XCircle />
-                  Cancel
-                </Button>
+                <div className="flex items-center gap-1">
+                  {session.pending_review > 0 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => onClearReview(session.id)}
+                    >
+                      <CheckCheck />
+                      Basket checked
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => onCancelSession(session.id)}
+                  >
+                    <XCircle />
+                    Cancel
+                  </Button>
+                </div>
               </div>
             ))}
             {sessions.length === 0 && (

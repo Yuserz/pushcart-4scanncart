@@ -32,6 +32,11 @@ export interface PosSessionRow {
   status: string;
   created_at: string;
   last_activity_at: string;
+  // The scanner's unresolved-interaction count and when staff last cleared it (admin
+  // POS screen: shows the "needs review" state and offers the Basket checked clear).
+  pending_review: number;
+  review_cleared_at: string | null;
+  review_reasons: string[];
   stations: { name: string } | null;
   carts: { code_token: string } | null;
 }
@@ -350,3 +355,11 @@ export const cancelPosSession = async (id: string) => {
   }
 };
 
+/** Staff checked the basket from the admin screen: clear the session's review state. */
+export const clearPosSessionReview = async (id: string) => {
+  try {
+    await axiosService.post(`/api/protected/pos-sessions/${id}/review-clear`);
+  } catch (e) {
+    return apiError(e);
+  }
+};

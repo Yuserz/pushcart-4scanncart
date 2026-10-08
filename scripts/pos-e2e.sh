@@ -365,6 +365,27 @@ check "a counter-mode sync leaves the review alone" "$(jqr 'data.pending_review'
 code="$(pos_sync "$REF" "[{\"class_name\":\"$CLASS\",\"quantity\":5}]" '"pending_review":0,"review_reasons":[]')"
 check "review cleared -> 200" "$code" "200"
 
+# --- the admin POS screen's own Basket checked (staff at the tablet) ------
+# The desktop's review re-posts carry review_as_of — the newest interaction the count
+# includes — so a staff clear stamped on the session outranks a stale re-post while a
+# genuinely newer interaction still gets through. And the clear itself is admin-gated.
+BACKDATED_AS_OF="$(node -e "process.stdout.write(new Date(Date.now()-60000).toISOString())")"
+code="$(pos_sync "$REF" "[{\"class_name\":\"$CLASS\",\"quantity\":5}]" "\"pending_review\":1,\"review_reasons\":[\"two items crossed the opening at once\"],\"review_as_of\":\"$BACKDATED_AS_OF\"")"
+check "sync with review + as_of -> 200" "$code" "200"
+code="$(curl -s -o /dev/null -w '%{http_code}' -b "$COOKIE" -X POST \
+  "$APP_URL/api/protected/pos-sessions/00000000-0000-0000-0000-000000000000/review-clear")"
+check "customer clear -> 403 (admin only)" "$code" "403"
+rest PATCH "station_sessions?session_ref=eq.$REF" "{\"pending_review\":0,\"review_reasons\":\"[]\",\"review_cleared_at\":\"$(node -e 'process.stdout.write(new Date().toISOString())')\"}" >/dev/null
+code="$(pos_get "$STATION")"
+check "the desktop poll carries the staff clear" "$(jqr 'data.review_cleared_at' <"$WORK/body")" "$(rest GET "station_sessions?session_ref=eq.$REF&select=review_cleared_at" | jqr '0.review_cleared_at')"
+code="$(pos_sync "$REF" "[{\"class_name\":\"$CLASS\",\"quantity\":5}]" "\"pending_review\":1,\"review_reasons\":[\"two items crossed the opening at once\"],\"review_as_of\":\"$BACKDATED_AS_OF\"")"
+check "a stale re-post loses to the staff clear" "$(rest GET "station_sessions?session_ref=eq.$REF&select=pending_review" | jqr '0.pending_review')" "0"
+NEWER_AS_OF="$(node -e "process.stdout.write(new Date(Date.now()+5000).toISOString())")"
+code="$(pos_sync "$REF" "[{\"class_name\":\"$CLASS\",\"quantity\":5}]" "\"pending_review\":1,\"review_reasons\":[\"two items crossed the opening at once\"],\"review_as_of\":\"$NEWER_AS_OF\"")"
+check "a newer interaction raises the review again" "$(rest GET "station_sessions?session_ref=eq.$REF&select=pending_review" | jqr '0.pending_review')" "1"
+code="$(pos_sync "$REF" "[{\"class_name\":\"$CLASS\",\"quantity\":5}]" '"pending_review":0,"review_reasons":[]')"
+check "review cleared again for the finish chain -> 200" "$code" "200"
+
 # --- insufficient stock blocks Finish -----------------------------------
 rest PATCH "products?id=eq.$PRODUCT_ID" '{"stock_quantity":2}' >/dev/null
 code="$(curl -s -o "$WORK/body" -w '%{http_code}' -b "$COOKIE" -X POST \

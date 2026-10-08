@@ -89,7 +89,7 @@ export const getSessionForStation = async (stationId: string) => {
     const { data, error } = await supabase
       .from('station_sessions')
       .select(
-        'session_ref, cart_id, carts:cart_id(status, code_token, shopper_no)',
+        'session_ref, cart_id, review_cleared_at, carts:cart_id(status, code_token, shopper_no)',
       )
       .eq('station_id', stationId)
       .eq('status', 'open')
@@ -124,6 +124,10 @@ export const getSessionForStation = async (stationId: string) => {
         shopper_code: cart?.shopper_no
           ? `Shopper_${String(cart.shopper_no).padStart(4, '0')}`
           : null,
+        // When staff last cleared the basket review from the admin POS screen: the
+        // desktop resolves the interactions this stamps so its next sync does not
+        // re-raise what a human just checked.
+        review_cleared_at: data.review_cleared_at ?? null,
       },
     });
   } catch (error) {
@@ -163,6 +167,10 @@ export const reconcileCart = async (payload: PosSyncPayload) => {
           p_station_id: payload.station_id,
           p_pending: payload.pending_review,
           p_reasons: payload.review_reasons ?? [],
+          // The newest interaction the count includes: what lets a staff clear
+          // (admin POS screen) outrank a stale desktop re-post while a genuinely
+          // newer interaction still gets through.
+          p_review_as_of: payload.review_as_of ?? null,
         },
       );
       if (reviewError) {
