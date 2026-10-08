@@ -27,6 +27,9 @@ export interface PosSyncPayload {
   // a counter-mode sync, which has no such notion and leaves the stored state alone.
   pending_review?: number;
   review_reasons?: string[];
+  // Sent when pending_review just rose: the desktop's timestamp of the moment the camera
+  // saw the unresolved interaction. The tablet uses it to order its review banner.
+  review_as_of?: string;
 }
 
 // Map each function's {error} codes onto the shared response helpers (§3.4). The
