@@ -55,6 +55,23 @@ export const getSessionForStation = async (stationId: string) => {
   try {
     const supabase = await createClient();
 
+    // The idle window's clock. Until this sweep, an abandoned session only ever became
+    // `cancelled` when the *next* customer tapped Start — in between it sat `open`, the
+    // departed customer's tablet kept showing a live cart, and the desktop stayed bound to it.
+    // This route is what the desktop already polls every 1–5 s while the app runs, so asking
+    // it to sweep first makes the poll the window's clock: the session is cancelled within one
+    // poll of expiring, and the empty answer below is what unbinds the desktop. A true timer
+    // (instrumentation, pg_cron) would add a scheduler for a cancellation nothing can observe
+    // sooner — the poll is always already touching the table. The same window value
+    // `pos_open_session` reads; a failed sweep must not fail the poll (the read below still
+    // answers, one window late at worst), so its error is swallowed where a sync error is not.
+    const idleCancelMinutes = Number(process.env.POS_IDLE_CANCEL_MINUTES ?? 15);
+    await supabase.rpc('pos_cancel_idle_sessions', {
+      p_idle_cancel_minutes: Number.isFinite(idleCancelMinutes)
+        ? idleCancelMinutes
+        : 15,
+    });
+
     const { data: station, error: stationError } = await supabase
       .from('stations')
       .select('id')
@@ -160,14 +177,14 @@ export const reconcileCart = async (payload: PosSyncPayload) => {
 export const openStationSession = async (stationId: string, cartId: string) => {
   try {
     const supabase = await createClient();
-    const idleCancelMinutes = Number(process.env.POS_IDLE_CANCEL_MINUTES ?? 5);
+    const idleCancelMinutes = Number(process.env.POS_IDLE_CANCEL_MINUTES ?? 15);
 
     const { data, error } = await supabase.rpc('pos_open_session', {
       p_station_id: stationId,
       p_cart_id: cartId,
       p_idle_cancel_minutes: Number.isFinite(idleCancelMinutes)
         ? idleCancelMinutes
-        : 5,
+        : 15,
     });
 
     if (error) {

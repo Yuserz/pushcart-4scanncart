@@ -35,6 +35,7 @@ fi
 WORK="$(mktemp -d)"
 COOKIE="$WORK/one.txt"
 COOKIE2="$WORK/two.txt"
+COOKIE3="$WORK/three.txt"
 PASS=0
 FAIL=0
 
@@ -117,6 +118,10 @@ if [[ -z "$PRODUCT_ID" ]]; then echo "could not seed a product" >&2; exit 2; fi
 rest POST 'product_class_map' "{\"class_slug\":\"$CLASS\",\"product_id\":\"$PRODUCT_ID\"}" >/dev/null
 rest POST 'product_class_map' "{\"class_slug\":\"$CLASS2\",\"product_id\":\"$PRODUCT_ID\"}" >/dev/null
 echo "seeded station=$STATION product=$PRODUCT_ID"
+
+# The idle window both idle sections backdate past. Read once, here, because both the poll
+# sweep and the on-Start cancel are measured against it.
+IDLE_MIN="${POS_IDLE_CANCEL_MINUTES:-5}"
 
 # --- unknown station -> 404 ---------------------------------------------
 code="$(pos_get "nope-$STATION")"
@@ -384,6 +389,78 @@ check "stock deducted" "$stock" "96"
 # --- a sync after Finish -> 409 -----------------------------------------
 code="$(pos_sync "$REF" "[{\"class_name\":\"$CLASS\",\"quantity\":1}]")"
 check "post-finish sync -> 409" "$code" "409"
+
+# --- the poll itself sweeps an expired session, no Start needed ----------
+# The idle window's clock is the desktop's session poll: `GET /api/pos/session` runs
+# `pos_cancel_idle_sessions` before its read, so a session abandoned past the window is
+# `cancelled` within one poll of expiring — the tablet stops showing a live cart and the
+# desktop unbinds on the poll's empty answer, without anybody tapping Start. The fresh
+# session beside it must survive: the sweep takes only past-window rows.
+
+# --- the window's near edge pins the configured value ---------------------
+# A session idle just INSIDE the window must survive the same poll that kills expired ones.
+# Backdated to IDLE_MIN-5 minutes: a server still on the old 5-minute default fails here
+# whenever the env carries 15, because a 10-minute-old session would be swept.
+LOGIN_B="$(curl -s -c "$COOKIE3" -X POST "$APP_URL/api/auth" -H 'Content-Type: application/json' -d '{"type":"customer-sign-in"}')"
+CART_B="$(printf '%s' "$LOGIN_B" | jqr 'data.cart.id')"
+OPEN_B="$(curl -s -b "$COOKIE3" -X POST "$APP_URL/api/protected/station-session" -H 'Content-Type: application/json' -d "{\"station_id\":\"$STATION\",\"cart_id\":\"$CART_B\"}")"
+REF_B="$(printf '%s' "$OPEN_B" | jqr 'data.session_ref')"
+if [[ -n "$REF_B" ]]; then ok "near-edge session opened ($REF_B)"; else bad "near-edge session failed to open: $OPEN_B"; fi
+BACKDATE_B="$(node -e "process.stdout.write(new Date(Date.now()-($IDLE_MIN-5)*60000).toISOString())")"
+rest PATCH "station_sessions?session_ref=eq.$REF_B" "{\"last_activity_at\":\"$BACKDATE_B\"}" >/dev/null
+code="$(curl -s -o /dev/null -w '%{http_code}' "$APP_URL/api/pos/session?station_id=$STATION" -H "x-pos-token: $POS_INGEST_SECRET")"
+check "a poll over a session inside the window answers 200" "$code" "200"
+check "a session idle just inside the window survives the poll" "$(rest GET "station_sessions?session_ref=eq.$REF_B&select=status" | jqr '0.status')" "open"
+BACKDATE_B="$(node -e "process.stdout.write(new Date(Date.now()-($IDLE_MIN+10)*60000).toISOString())")"
+rest PATCH "station_sessions?session_ref=eq.$REF_B" "{\"last_activity_at\":\"$BACKDATE_B\"}" >/dev/null
+curl -s -o /dev/null "$APP_URL/api/pos/session?station_id=$STATION" -H "x-pos-token: $POS_INGEST_SECRET"
+check "the same session pushed past the window is cancelled" "$(rest GET "station_sessions?session_ref=eq.$REF_B&select=status" | jqr '0.status')" "cancelled"
+LOGIN3="$(curl -s -c "$COOKIE3" -X POST "$APP_URL/api/auth" -H 'Content-Type: application/json' -d '{"type":"customer-sign-in"}')"
+CART3="$(printf '%s' "$LOGIN3" | jqr 'data.cart.id')"
+OPEN5="$(curl -s -b "$COOKIE3" -X POST "$APP_URL/api/protected/station-session" -H 'Content-Type: application/json' -d "{\"station_id\":\"$STATION\",\"cart_id\":\"$CART3\"}")"
+REF5="$(printf '%s' "$OPEN5" | jqr 'data.session_ref')"
+if [[ -n "$REF5" ]]; then ok "sweep-test session opened ($REF5)"; else bad "sweep-test session failed to open: $OPEN5"; fi
+BACKDATE5="$(node -e "process.stdout.write(new Date(Date.now()-($IDLE_MIN+10)*60000).toISOString())")"
+rest PATCH "station_sessions?session_ref=eq.$REF5" "{\"last_activity_at\":\"$BACKDATE5\"}" >/dev/null
+code="$(curl -s -o "$WORK/body" -w '%{http_code}' "$APP_URL/api/pos/session?station_id=$STATION" -H "x-pos-token: $POS_INGEST_SECRET")"
+check "the desktop poll itself answers 200" "$code" "200"
+check "the poll answers unbound (the sweep ran inside it)" "$(jqr 'data.session_ref' <"$WORK/body")" ""
+check "the expired session is cancelled by the poll" "$(rest GET "station_sessions?session_ref=eq.$REF5&select=status" | jqr '0.status')" "cancelled"
+ended5="$(rest GET "station_sessions?session_ref=eq.$REF5&select=ended_at" | jqr '0.ended_at')"
+[[ -n "$ended5" ]] && ok "the swept session has an ended_at" || bad "swept session has no ended_at"
+code="$(pos_sync "$REF5" "[{\"class_name\":\"$CLASS\",\"quantity\":1}]")"
+check "a sync on the swept session -> 409" "$code" "409"
+
+# --- the idle window clears an abandoned session on the next Start -------
+# Spec §7: a session whose last_activity_at is past POS_IDLE_CANCEL_MINUTES is cancelled by the
+# next customer's Start (which then succeeds) rather than answering busy forever, and the
+# abandoned session_ref stops accepting syncs. The window is read so the backdate always clears
+# it, whatever the host's setting is.
+LOGIN3="$(curl -s -c "$COOKIE3" -X POST "$APP_URL/api/auth" -H 'Content-Type: application/json' -d '{"type":"customer-sign-in"}')"
+CART3="$(printf '%s' "$LOGIN3" | jqr 'data.cart.id')"
+OPEN3="$(curl -s -b "$COOKIE3" -X POST "$APP_URL/api/protected/station-session" -H 'Content-Type: application/json' -d "{\"station_id\":\"$STATION\",\"cart_id\":\"$CART3\"}")"
+REF3="$(printf '%s' "$OPEN3" | jqr 'data.session_ref')"
+if [[ -n "$REF3" ]]; then ok "idle-test session opened ($REF3)"; else bad "idle-test session failed to open: $OPEN3"; fi
+BACKDATE="$(node -e "process.stdout.write(new Date(Date.now()-($IDLE_MIN+10)*60000).toISOString())")"
+rest PATCH "station_sessions?session_ref=eq.$REF3" "{\"last_activity_at\":\"$BACKDATE\"}" >/dev/null
+code="$(curl -s -o "$WORK/body" -w '%{http_code}' -b "$COOKIE2" -X POST \
+  "$APP_URL/api/protected/station-session" -H 'Content-Type: application/json' \
+  -d "{\"station_id\":\"$STATION\",\"cart_id\":\"$CART2\"}")"
+check "start past the idle window -> 200 (not busy forever)" "$code" "200"
+REF4="$(jqr 'data.session_ref' <"$WORK/body")"
+if [[ -n "$REF4" && "$REF4" != "$REF3" ]]; then ok "the new Start carries a fresh session_ref"; else bad "expected a fresh session_ref, got [$REF4]"; fi
+check "the abandoned session is cancelled" "$(rest GET "station_sessions?session_ref=eq.$REF3&select=status" | jqr '0.status')" "cancelled"
+ended="$(rest GET "station_sessions?session_ref=eq.$REF3&select=ended_at" | jqr '0.ended_at')"
+[[ -n "$ended" ]] && ok "the abandoned session has an ended_at" || bad "abandoned session has no ended_at"
+code="$(pos_sync "$REF3" "[{\"class_name\":\"$CLASS\",\"quantity\":1}]")"
+check "a sync on the cancelled session -> 409" "$code" "409"
+
+# ...and the same poll over a session that is NOT expired must leave it alone: the sweep takes
+# only past-window rows, or every Start would be cancelled out from under the customer it bound.
+code="$(curl -s -o /dev/null -w '%{http_code}' "$APP_URL/api/pos/session?station_id=$STATION" -H "x-pos-token: $POS_INGEST_SECRET")"
+check "a poll over a fresh session answers 200" "$code" "200"
+check "the fresh session survives the sweep" "$(rest GET "station_sessions?session_ref=eq.$REF4&select=status" | jqr '0.status')" "open"
+
 
 echo
 echo "PASS=$PASS FAIL=$FAIL"

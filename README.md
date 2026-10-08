@@ -43,7 +43,7 @@ SCANnCART desktop camera talks to the token-authenticated routes below. Configur
 | Variable | Purpose |
 | --- | --- |
 | `POS_INGEST_SECRET` | Shared secret the desktop sends as `x-pos-token`. 32+ hex chars; must match SCANnCART's `posSecret`. Server-only — never prefix with `NEXT_PUBLIC_`. |
-| `POS_IDLE_CANCEL_MINUTES` | Optional. Minutes an open session may sit idle before the next *Start shopping* cancels it. Default `5`. |
+| `POS_IDLE_CANCEL_MINUTES` | Optional. Minutes an open session may sit idle before the next *Start shopping* cancels it. Default `15`. |
 | `POS_STAFF_PIN` | Optional. The **default** staff code (4–8 digits), used only until an admin sets one in POS Mapping (below). Empty and no admin code = staff removal off. Server-only. |
 
 ### Staff code
