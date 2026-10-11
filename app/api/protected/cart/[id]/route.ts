@@ -52,10 +52,6 @@ export async function PUT(
     return validationErrorNextResponse();
   }
 
-  if (body.type === 'update-cart-cashier') {
-    return editCart({ user_id: body.userId }, id);
-  }
-
   if (body.type === 'update-cart-status') {
     return editCart({ status: body.status }, id);
   }

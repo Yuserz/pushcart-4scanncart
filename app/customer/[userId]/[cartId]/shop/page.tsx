@@ -13,21 +13,18 @@ import {
   CardHeader,
   CardFooter,
 } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
-import { axiosService } from '@/app/api/axios-client';
 import { calculateCartTotal } from '@/app/user/[userId]/pos/helpers/calculateCartTotal';
-import { ChooseCashier } from './components/ChooseCashier';
 import { GoToCashier } from './components/GoToCashier';
 
 export default async function Shop({
   params,
   searchParams,
 }: {
-  params: Promise<{ cartId: string; userId: string }>;
+  params: Promise<{ cartId: string }>;
   searchParams: Promise<{ page: string; search: string; category: string }>;
 }): Promise<JSX.Element> {
-  const { cartId, userId } = await params;
+  const { cartId } = await params;
   const { page, search, category } = await searchParams;
 
   const hasFilterCategory = !category
@@ -35,9 +32,6 @@ export default async function Shop({
     : `?page=${page || 1}&perPage=10&search=${search}&sortBy=created_at&filter=${category}`;
 
   const response = await getProducts(hasFilterCategory);
-
-  const profilesResponse = await axiosService.get('/api/protected/cashiers');
-  const userProfiles = profilesResponse.data.data as { id: string }[];
 
   const cartResponse = await getCartsById(cartId);
 
@@ -55,7 +49,7 @@ export default async function Shop({
                 <strong className="text-3xl font-bold">Congratulations!</strong>
               </h1>
               <span className="text-gray-500">
-                for checking out your product, please proceed to your chosen
+                for checking out your product, please proceed to any available
                 cashier, the id below is your cart identification.
               </span>
             </CardHeader>
@@ -63,18 +57,6 @@ export default async function Shop({
               <Badge className="text-xl font-bold">
                 {cartResponse.code_token}
               </Badge>
-
-              <Separator />
-
-              <h1 className="text-left">
-                You can also <strong>Freely</strong> Change your cashier
-              </h1>
-              <ChooseCashier
-                userProfiles={userProfiles}
-                cartId={cartId}
-                currentCashier={cartResponse?.user_id as string}
-                userId={userId}
-              />
             </CardContent>
             <CardFooter>
               <GoToCashier cartId={cartId} title="Reset Cart" status="active" />
@@ -116,15 +98,6 @@ export default async function Shop({
               )}
             </section>
 
-            {countCartItems > 0 && (
-              <ChooseCashier
-                userProfiles={userProfiles}
-                cartId={cartId}
-                currentCashier={cartResponse?.user_id as string}
-                userId={userId}
-              />
-            )}
-
             <Card className="w-full border-none shadow-none">
               <CardFooter className="flex items-center justify-between py-4">
                 <span className="text-foreground text-sm font-bold">
@@ -135,7 +108,7 @@ export default async function Shop({
                 </span>
               </CardFooter>
 
-              {userId !== cartResponse?.user_id && (
+              {countCartItems > 0 && (
                 <GoToCashier
                   cartId={cartId}
                   title="Go to Cashier"

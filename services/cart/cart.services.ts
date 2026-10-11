@@ -28,28 +28,6 @@ export const updateCartStatus = async (
   }
 };
 
-export const updateCart = async (userId: string, id: string): Promise<void> => {
-  try {
-    const response = await axiosService.put(`/api/protected/cart/${id}`, {
-      userId,
-      type: 'update-cart-cashier',
-    });
-
-    toast('Successfully', {
-      description: response.data.message,
-    });
-
-    return response.data.data;
-  } catch (e) {
-    if (axios.isAxiosError(e)) {
-      toast.error('ERROR!', {
-        description: e.response?.data.error,
-      });
-      throw e.response?.data.error;
-    }
-  }
-};
-
 export const getCarts = async (
   params: string,
 ): Promise<Carts[] | undefined> => {

@@ -22,6 +22,7 @@ import { useRouter } from 'next/navigation';
 import { usePathname } from 'next/navigation';
 import { debounce } from 'lodash';
 import { Vat } from '@/lib/types/vat';
+import { useRealtimeCarts } from '../helpers/useRealtimeCarts';
 
 interface OrdersForm {
   cartItems: CartItemsProducts[];
@@ -45,6 +46,8 @@ export function Orders({
 
   const pathname = usePathname();
   const router = useRouter();
+
+  useRealtimeCarts();
 
   const tabsOptions: MenuOptions[] = [
     {
