@@ -32,9 +32,8 @@ export async function GET(req: NextRequest) {
     if (!admin)
       query = query.or(`customer_id.eq.${user.id},user_id.eq.${user.id}`);
 
-    if (search) {
-      query = query.ilike('code_token', `%${search}%`);
-    }
+    // code_token is a UUID column — Postgres has no ILIKE on uuid, so the
+    // keyword filter happens over the fetched rows below instead.
 
     const { data, error } = await query;
 
