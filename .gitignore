@@ -41,3 +41,4 @@ lint-report.txt
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+supabase-*.log
