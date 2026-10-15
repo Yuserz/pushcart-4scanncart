@@ -1,0 +1,62 @@
+name: Push guard (repo hygiene)
+
+# Fails any push that introduces the content classes that already bit this repo
+# once: a Supabase CLI secret constant printed into a captured log travelled in
+# a docs commit and GitHub push protection declined the pack at the client —
+# the right outcome, but nothing inside the repo had stopped it, and a pushed
+# round-trip is the only place a guard like this can act on all of the pushed
+# commits at once.
+#
+# The scanned classes (see `scripts/push-guard.sh` for the rationale in full):
+#
+#   1. the CLI's secret-key constant (`sb_` + `secret_`) — public by design;
+#                                              public by design, but a commit
+#                                              carrying it trips push
+#                                              protection on every later push.
+#   2. Supabase API-key JWT literals         — the payload prefix every
+#                                              anon/service_role key shares,
+#                                              so the JWT secret the key was
+#                                              signed with cannot sneak a key
+#                                              past the pattern.
+#   3. tracked paths ending `.log`           — added OR refreshed; logs live on
+#                                              disk, not in history.
+#
+# What is deliberately NOT matched: the SQL role `service_role` in GRANT
+# statements — a role reference, not a credential. A guard that fails on
+# legitimate schema work is disabled the week after it lands.
+#
+# Only ADDED lines of the pushed range (`github.event.before`..HEAD) are
+# judged, so cleaned history never re-fails and a guard change itself stays
+# reviewable in the diff. A first push of a branch (zero `before`) scans the
+# whole branch instead — that is what an initial push introduces.
+#
+# `fetch-depth: 0` gives the range the commits it may cross when `before` is
+# old; the self-test keeps the scanner itself covered in the cloud, not only
+# locally. The script is the whole detection (the workflow only picks the
+# range), so the same guard runs locally: `bash scripts/push-guard.sh
+# <base> <head>`.
+
+on:
+  push:
+    branches: ["**"]
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Fails on the CLI secret constant, Supabase key JWTs, committed logs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout with full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scanner self-test (runtime-shape coverage)
+        run: bash scripts/push-guard.sh --selftest
+
+      - name: Scan the content this push introduces
+        env:
+          PUSHGUARD_BASE: ${{ github.event.before }}
+        run: bash scripts/push-guard.sh "$PUSHGUARD_BASE" "$GITHUB_SHA"

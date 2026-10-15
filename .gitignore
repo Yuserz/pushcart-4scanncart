@@ -42,3 +42,5 @@ lint-report.txt
 *.tsbuildinfo
 next-env.d.ts
 supabase-*.log
+supabase_output.txt
+supabase_setup.log
