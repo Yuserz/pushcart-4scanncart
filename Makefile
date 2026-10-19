@@ -50,6 +50,42 @@ setup-supabase: init-log
 	@rm -f supabase_output.txt
 	@echo "[$(TIMESTAMP)] Temporary output file cleaned up" | tee -a $(LOG_FILE)
 
+# Default dev loop: the app against the Supabase cloud project (pushcart-dev), no Docker.
+# .env.cloud holds the cloud URL/keys; it is copied over .env, which `make setup-supabase`
+# regenerates for the local Docker stack when you switch back.
+dev:
+	@if [ ! -f .env.cloud ]; then \
+		echo "Error: .env.cloud not found. Ask a teammate for it (it holds the cloud keys)."; \
+		exit 1; \
+	fi
+	@cp .env.cloud .env
+	@echo "Using Supabase cloud (pushcart-dev)"
+	yarn dev
+
+# Local Docker stack instead of the cloud. Use it to try migrations or run the e2e
+# scripts before they touch the shared cloud database.
+dev-local: setup-supabase
+	yarn dev
+
+# Apply new migrations in supabase/migrations to the cloud project. Requires
+# `yarn supabase login` (run in a real terminal) and `yarn supabase link --project-ref ssitglvklxcdxmgpeoti`.
+cloud-push:
+	$(SUPABASE) db push
+
+# Push the [auth] settings in supabase/config.toml (anonymous sign-ins, confirmations) to the cloud.
+cloud-config-push:
+	$(SUPABASE) config push
+
+# Load supabase/seeds into the cloud project. The CLI records the seed file's hash, so it
+# only runs again after the seed changes; the seed itself is idempotent either way.
+cloud-seed:
+	$(SUPABASE) db push --include-seed
+
+# Create or reset the admin and cashier accounts and the POS staff PIN, against whichever
+# project .env points at. Passwords come from SEED_* in .env (see scripts/seed-accounts.mjs).
+seed-accounts:
+	node scripts/seed-accounts.mjs
+
 run-dev:
 	$(SUPABASE) start --ignore-health-check
 	yarn dev
@@ -103,4 +139,6 @@ generate-types:
 	$(SUPABASE) gen types typescript --local
 
 .PHONY: all init-log setup-supabase clean migrate-new migrate-up migrate-diff migrate-reset \
-	stop-db cleanup-anonymous run-dev run-start start-app build-app generate-types
+	stop-db cleanup-anonymous dev dev-local cloud-push cloud-config-push cloud-seed seed-accounts \
+	run-dev run-start \
+	start-app build-app generate-types

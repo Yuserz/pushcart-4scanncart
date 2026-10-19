@@ -18,7 +18,41 @@ Supabase (Postgres, Auth, Storage, Realtime).
 The Supabase CLI is a project dependency, so no global install is needed. Always call it as
 `yarn supabase …`. It goes through `scripts/supabase.mjs`, which picks the right binary on Windows.
 
-## First-time setup
+## Cloud development (default, no Docker)
+
+Day-to-day work runs against the shared Supabase cloud project **pushcart-dev**
+(ref `ssitglvklxcdxmgpeoti`, Tokyo), so the laptop does not run the Supabase containers.
+
+1. `yarn install`
+2. Get `.env.cloud` from a teammate (password manager, never git or chat) and put it in the
+   project root. It holds the cloud URL and keys, `POS_INGEST_SECRET`, and the `SEED_*`
+   account passwords and staff PIN.
+3. `make dev`, which copies `.env.cloud` over `.env` and runs `yarn dev`.
+
+The cloud is already migrated and seeded with the SCANnCART seven-class catalog (one product per
+detector class, mapped in `product_class_map`), 12% VAT and station `counter-1`. Accounts:
+
+| Account | Role | Password |
+| --- | --- | --- |
+| `admin@pushcart.test` | admin | `SEED_ADMIN_PASSWORD` in `.env.cloud` |
+| `cashier@pushcart.test` | cashier (`user`) | `SEED_CASHIER_PASSWORD` in `.env.cloud` |
+| guest | anonymous customer | none: the customer pages (`/customer`, **Start shopping**) sign in anonymously |
+
+Changing the cloud (once per machine: `yarn supabase login` in a real terminal, then
+`yarn supabase link --project-ref ssitglvklxcdxmgpeoti`):
+
+| Task | `make` shortcut |
+| --- | --- |
+| Push new migrations | `make cloud-push` |
+| Load the seed (re-runs only after `supabase/seeds` changes) | `make cloud-seed` |
+| Create / reset the admin and cashier accounts and staff PIN | `make seed-accounts` |
+| Push `[auth]` settings from `supabase/config.toml` | `make cloud-config-push` |
+
+The cloud database is shared: try new migrations and run the e2e scripts on the local Docker
+stack first (`make dev-local`, setup below), and never `db reset --linked`. A free-tier project
+pauses after about a week without traffic; resume it from the Supabase dashboard.
+
+## Local Docker setup (optional)
 
 ### 1. Install dependencies
 
@@ -73,21 +107,22 @@ POS_IDLE_CANCEL_MINUTES=15
 
 Generate a secret with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
 
-### 4. Create an admin account
+### 4. Create the accounts
 
-The seed adds VAT, categories and products, but no users.
+The seed adds VAT, categories, the seven products and their class mapping, and station
+`counter-1`, but no users. Add passwords to `.env`, then create the admin and cashier:
 
-1. Open Supabase Studio at <http://127.0.0.1:54323> → **Authentication** → **Add user** and
-   create `admin@example.com` with a password (tick *Auto confirm user*).
-2. In Studio → **SQL Editor**, promote it:
+```dotenv
+SEED_ADMIN_PASSWORD=<password>
+SEED_CASHIER_PASSWORD=<password>
+SEED_STAFF_PIN=<4-8 digits, optional>
+```
 
-   ```sql
-   update public.profiles
-   set role = 'admin', first_name = 'Super', last_name = 'Admin'
-   where id = (select id from auth.users where email = 'admin@example.com');
-   ```
+```bash
+make seed-accounts      # or: node scripts/seed-accounts.mjs
+```
 
-3. Sign in at <http://localhost:3000/auth/sign-in>.
+Sign in at <http://localhost:3000/auth/sign-in> as `admin@pushcart.test` or `cashier@pushcart.test`.
 
 ### 5. Run the app
 
@@ -101,6 +136,8 @@ yarn dev            # http://localhost:3000 (Turbopack, hot reload)
 
 | Task | Command | `make` shortcut |
 | --- | --- | --- |
+| Dev server on Supabase cloud | `cp .env.cloud .env`, then `yarn dev` | `make dev` |
+| Local Supabase (rewrites `.env`) + dev server | `make setup-supabase`, then `yarn dev` | `make dev-local` |
 | Start Supabase + dev server | `yarn supabase start`, then `yarn dev` | `make run-dev` |
 | Stop Supabase | `yarn supabase stop` | `make stop-db` |
 | Show Supabase URLs / keys | `yarn supabase status` | — |
@@ -124,7 +161,7 @@ mail catcher (Inbucket) `http://127.0.0.1:54324`, Postgres `127.0.0.1:54322`.
 | Rebuild DB from migrations + seeds | `yarn supabase db reset` | `make migrate-reset` |
 | Print TypeScript types | `yarn supabase gen types typescript --local` | `make generate-types` |
 
-`db reset` wipes everything, users included. Redo step 4 afterwards.
+`db reset` wipes everything, users included. Run `make seed-accounts` afterwards.
 
 ## Tests and checks
 
@@ -140,12 +177,19 @@ node scripts/pos-contract.mjs           # POS API contract (also runs in CI)
 ## Troubleshooting
 
 - **`Cannot find module '.../node_modules/supabase/bin/supabase'`**: use `yarn supabase …`,
-  not `npx supabase`. If it persists, run `yarn install` again.
+  not `npx supabase`. If it persists, run `yarn install` again. `scripts/supabase.mjs` handles
+  both the old `bin/` CLI layout and the newer `dist/supabase.js` one.
+- **`yarn install` rewrote `yarn.lock`**: the committed lockfile is in Yarn Berry format while
+  `package.json` pins Yarn 1, so Yarn 1 regenerates it. Discard it with `git checkout yarn.lock`.
+- **`yarn supabase login` says "non-TTY"**: run it in a normal terminal window, not through an
+  editor or agent shell.
+- **`make dev` says `.env.cloud not found`**: get the file from a teammate (see
+  [Cloud development](#cloud-development-default-no-docker)).
 - **`supabase start` fails**: Docker Desktop is not running, or ports 54321–54327 are in use.
   Run `yarn supabase stop` and retry.
 - **`Missing NEXT_PUBLIC_SUPABASE_URL …` or images not loading**: `.env` is missing or stale.
   Rerun `make setup-supabase` (or rebuild it from `yarn supabase status`) and restart `yarn dev`.
-- **Signed in but no admin pages**: the profile's role is not `admin`. Rerun the SQL in step 4.
+- **Signed in but no admin pages**: the profile's role is not `admin`. Rerun `make seed-accounts`.
 - **POS routes return 401**: `POS_INGEST_SECRET` is unset or differs from SCANnCART's `posSecret`.
   Remember that `make setup-supabase` removes it from `.env`.
 
