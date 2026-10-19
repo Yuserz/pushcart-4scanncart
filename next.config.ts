@@ -32,6 +32,14 @@ const nextConfig: NextConfig = {
         destination: `${process.env.NEXT_PUBLIC_DESTINATION}`,
         permanent: true,
       },
+      // There is no /home page, but browsers reach it from history, old bookmarks or
+      // another app's service worker on the same localhost port. Send it to sign-in,
+      // which forwards a signed-in user to their dashboard.
+      {
+        source: '/home',
+        destination: `${process.env.NEXT_PUBLIC_DESTINATION}`,
+        permanent: false,
+      },
     ];
   },
 };
