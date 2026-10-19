@@ -1,39 +1,160 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Pushcart Web
 
-## Getting Started
+Next.js 16 (App Router) storefront, admin dashboard and POS self-checkout tablet, backed by
+Supabase (Postgres, Auth, Storage, Realtime).
 
-First, run the development server:
+> **This project uses Yarn 1 (`yarn@1.22.22`).** The lockfile is `yarn.lock`. Do not run
+> `npm install`, `pnpm install` or `bun install`: they ignore `yarn.lock` and create a second lockfile.
+
+## Prerequisites
+
+| Tool | Version | Notes |
+| --- | --- | --- |
+| Node.js | 20 or newer | CI uses 20. |
+| Yarn | 1.22.22 | `corepack enable` picks up the version pinned in `package.json`, or `npm i -g yarn@1.22.22`. |
+| Docker Desktop | running | Needed by the local Supabase stack. |
+| `make` + a POSIX shell | optional | For the `make` shortcuts. On Windows use Git Bash. Every target has a plain `yarn` equivalent below. |
+
+The Supabase CLI is a project dependency, so no global install is needed. Always call it as
+`yarn supabase …`. It goes through `scripts/supabase.mjs`, which picks the right binary on Windows.
+
+## First-time setup
+
+### 1. Install dependencies
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+yarn install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2. Start local Supabase and create `.env`
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+make setup-supabase
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+This starts the Supabase containers (the first start applies `supabase/migrations` and
+`supabase/seeds`) and writes `.env` with the local URL and keys.
 
-## Learn More
+`make setup-supabase` **deletes and rewrites `.env`** every time it runs. Re-add any extra
+variables (the `POS_*` ones below) afterwards.
 
-To learn more about Next.js, take a look at the following resources:
+<details>
+<summary>Without make</summary>
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+yarn supabase start     # prints the API URL, keys and DB URL
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Create `.env` in the project root from that output:
 
-## Deploy on Vercel
+```dotenv
+NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...   # "Publishable" key
+SUPABASE_SECRET_KEY=sb_secret_...                         # "Secret" key, server only
+NEXT_PUBLIC_SUPABASE_DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
+NEXT_PUBLIC_SUPABASE_TOKEN=127
+NEXT_PUBLIC_DESTINATION=/auth/sign-in
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+NEXT_IMAGE_PUBLIC_URL=http://127.0.0.1:54321/storage/**
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Run `yarn supabase status` any time to see the values again.
+</details>
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### 3. Add the POS variables (only if you use the self-checkout)
+
+Append to `.env` (details in [POS self-checkout integration](#pos-self-checkout-integration-scanncart)):
+
+```dotenv
+POS_INGEST_SECRET=<32+ hex chars, same as SCANnCART posSecret>
+POS_STAFF_PIN=<4-8 digits, optional>
+POS_IDLE_CANCEL_MINUTES=15
+```
+
+Generate a secret with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+
+### 4. Create an admin account
+
+The seed adds VAT, categories and products, but no users.
+
+1. Open Supabase Studio at <http://127.0.0.1:54323> → **Authentication** → **Add user** and
+   create `admin@example.com` with a password (tick *Auto confirm user*).
+2. In Studio → **SQL Editor**, promote it:
+
+   ```sql
+   update public.profiles
+   set role = 'admin', first_name = 'Super', last_name = 'Admin'
+   where id = (select id from auth.users where email = 'admin@example.com');
+   ```
+
+3. Sign in at <http://localhost:3000/auth/sign-in>.
+
+### 5. Run the app
+
+```bash
+yarn dev            # http://localhost:3000 (Turbopack, hot reload)
+```
+
+`/` redirects to `/auth/sign-in`. Restart `yarn dev` after editing `.env`.
+
+## Daily workflow
+
+| Task | Command | `make` shortcut |
+| --- | --- | --- |
+| Start Supabase + dev server | `yarn supabase start`, then `yarn dev` | `make run-dev` |
+| Stop Supabase | `yarn supabase stop` | `make stop-db` |
+| Show Supabase URLs / keys | `yarn supabase status` | — |
+| Lint | `yarn lint` | — |
+| Production build | `yarn build` | `make build-app` (lint + build) |
+| Serve the build | `yarn start` | `make start-app` |
+| Supabase + production server | `yarn supabase start`, then `yarn start` | `make run-start` |
+| Delete leftover anonymous shoppers | `yarn cleanup:anonymous` (add `--dry-run` to preview) | `make cleanup-anonymous` |
+| Stop Supabase and remove `.env` | — | `make clean` |
+
+Local Supabase: API `http://127.0.0.1:54321`, Studio `http://127.0.0.1:54323`,
+mail catcher (Inbucket) `http://127.0.0.1:54324`, Postgres `127.0.0.1:54322`.
+
+## Database changes
+
+| Task | Command | `make` shortcut |
+| --- | --- | --- |
+| New empty migration | `yarn supabase migration new <name>` | `make migrate-new name=<name>` |
+| Apply pending migrations | `yarn supabase migration up` | `make migrate-up` |
+| Diff Studio edits into a migration | `yarn supabase db diff --local` | `make migrate-diff` |
+| Rebuild DB from migrations + seeds | `yarn supabase db reset` | `make migrate-reset` |
+| Print TypeScript types | `yarn supabase gen types typescript --local` | `make generate-types` |
+
+`db reset` wipes everything, users included. Redo step 4 afterwards.
+
+## Tests and checks
+
+The app and Supabase must be running, with the `.env` values exported in your shell:
+
+```bash
+bash scripts/pos-e2e.sh                 # POS end to end (needs POS_INGEST_SECRET, POS_STAFF_PIN)
+node scripts/customer-rls-e2e.mjs       # customer data isolation
+node scripts/pos-admin-routes-e2e.mjs   # admin POS routes (POS_APP_URL, default http://localhost:3000)
+node scripts/pos-contract.mjs           # POS API contract (also runs in CI)
+```
+
+## Troubleshooting
+
+- **`Cannot find module '.../node_modules/supabase/bin/supabase'`**: use `yarn supabase …`,
+  not `npx supabase`. If it persists, run `yarn install` again.
+- **`supabase start` fails**: Docker Desktop is not running, or ports 54321–54327 are in use.
+  Run `yarn supabase stop` and retry.
+- **`Missing NEXT_PUBLIC_SUPABASE_URL …` or images not loading**: `.env` is missing or stale.
+  Rerun `make setup-supabase` (or rebuild it from `yarn supabase status`) and restart `yarn dev`.
+- **Signed in but no admin pages**: the profile's role is not `admin`. Rerun the SQL in step 4.
+- **POS routes return 401**: `POS_INGEST_SECRET` is unset or differs from SCANnCART's `posSecret`.
+  Remember that `make setup-supabase` removes it from `.env`.
+
+## Deploy
+
+Any Node host or Vercel: set the same variables using a hosted Supabase project's URL and keys,
+then `yarn build && yarn start`. Push migrations with `yarn supabase link` and
+`yarn supabase db push`. Never expose `SUPABASE_SECRET_KEY`, `POS_INGEST_SECRET` or
+`POS_STAFF_PIN` as `NEXT_PUBLIC_*`.
 
 ## POS self-checkout integration (SCANnCART)
 
